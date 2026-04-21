@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meteor Dash - Janisis Juca</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+
+  <style>
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top, #1a1f3a 0%, #0b0f1f 55%, #03050d 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      font-family: 'Orbitron', sans-serif;
+      color: white;
+    }
+
+    #gameContainer {
+      text-align: center;
+    }
+
+    h1 {
+      margin-bottom: 10px;
+      color: #7df9ff;
+      text-shadow: 0 0 10px #7df9ff;
+      font-size: 2rem;
+    }
+
+    .sub {
+      margin-bottom: 14px;
+      color: #ffd166;
+      font-size: 0.9rem;
+    }
+
+    canvas {
+      background: linear-gradient(to bottom, #050816, #000000);
+      border: 2px solid #7df9ff;
+      border-radius: 12px;
+      box-shadow: 0 0 25px rgba(0,255,255,0.25);
+      display: block;
+      margin: 0 auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <h1>Meteor Dash - Janisis Juca</h1>
+    <div class="sub">Move with Arrow Keys • Collect stars • Avoid meteors • Click to start</div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const keys = {};
+    const HIGH_SCORE_KEY = "meteor_dash_high_score";
+
+    let gameStarted = false;
+    let gameOver = false;
+    let score = 0;
+    let highScore = Number(localStorage.getItem(HIGH_SCORE_KEY)) || 0;
+    let frameCount = 0;
+    let gameSpeed = 2.5;
+
+    const starsBg = Array.from({ length: 120 }, () => ({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: Math.random() * 2 + 0.5,
+      speed: Math.random() * 1.5 + 0.2
+    }));
+
+    const player = {
+      x: canvas.width / 2 - 25,
+      y: canvas.height - 80,
+      width: 50,
+      height: 50,
+      speed: 6,
+      shield: false,
+      shieldTimer: 0
+    };
+
+    let meteors = [];
+    let stars = [];
+    let shields = [];
+
+    function resetGame() {
+      gameStarted = true;
+      gameOver = false;
+      score = 0;
+      frameCount = 0;
+      gameSpeed = 2.5;
+      meteors = [];
+      stars = [];
+      shields = [];
+      player.x = canvas.width / 2 - 25;
+      player.y = canvas.height - 80;
+      player.shield = false;
+      player.shieldTimer = 0;
+      requestAnimationFrame(gameLoop);
+    }
+
+    function drawBackground() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "white";
+      starsBg.forEach(star => {
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+        ctx.fill();
+
+        star.y += star.speed;
+        if (star.y > canvas.height) {
+          star.y = 0;
+          star.x = Math.random() * canvas.width;
+        }
+      });
+    }
+
+    function drawPlayer() {
+      ctx.fillStyle = "#7df9ff";
+      ctx.beginPath();
+      ctx.moveTo(player.x + player.width / 2, player.y);
+      ctx.lineTo(player.x, player.y + player.height);
+      ctx.lineTo(player.x + player.width, player.y + player.height);
+      ctx.closePath();
+      ctx.fill();
+
+      if (player.shield) {
+        ctx.beginPath();
+        ctx.arc(player.x + player.width / 2, player.y + player.height / 2, 36, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(0,255,255,0.2)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(0,255,255,0.8)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+
+    function drawMeteor(meteor) {
+      ctx.fillStyle = "#ff595e";
+      ctx.beginPath();
+      ctx.arc(meteor.x, meteor.y, meteor.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawStar(item) {
+      ctx.fillStyle = "#ffd166";
+      ctx.beginPath();
+      ctx.arc(item.x, item.y, 10, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawShieldPowerUp(item) {
+      ctx.fillStyle = "#00f5d4";
+      ctx.beginPath();
+      ctx.arc(item.x, item.y, 12, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function movePlayer() {
+      if (keys["ArrowLeft"] && player.x > 0) {
+        player.x -= player.speed;
+      }
+      if (keys["ArrowRight"] && player.x + player.width < canvas.width) {
+        player.x += player.speed;
+      }
+
+      if (player.shield) {
+        player.shieldTimer--;
+        if (player.shieldTimer <= 0) {
+          player.shield = false;
+        }
+      }
+    }
+
+    function spawnObjects() {
+      if (frameCount % 45 === 0) {
+        meteors.push({
+          x: Math.random() * (canvas.width - 30) + 15,
+          y: -20,
+          radius: Math.random() * 12 + 15,
+          speed: Math.random() * 2 + gameSpeed
+        });
+      }
+
+      if (frameCount % 120 === 0) {
+        stars.push({
+          x: Math.random() * (canvas.width - 20) + 10,
+          y: -20,
+          speed: gameSpeed + 1
+        });
+      }
+
+      if (frameCount % 500 === 0) {
+        shields.push({
+          x: Math.random() * (canvas.width - 24) + 12,
+          y: -20,
+          speed: gameSpeed
+        });
+      }
+    }
+
+    function updateObjects() {
+      meteors.forEach((meteor, index) => {
+        meteor.y += meteor.speed;
+        if (meteor.y - meteor.radius > canvas.height) {
+          meteors.splice(index, 1);
+        }
+      });
+
+      stars.forEach((item, index) => {
+        item.y += item.speed;
+        if (item.y > canvas.height + 20) {
+          stars.splice(index, 1);
+        }
+      });
+
+      shields.forEach((item, index) => {
+        item.y += item.speed;
+        if (item.y > canvas.height + 20) {
+          shields.splice(index, 1);
+        }
+      });
+    }
+
+    function rectCircleCollision(rect, circleX, circleY, circleR) {
+      const closestX = Math.max(rect.x, Math.min(circleX, rect.x + rect.width));
+      const closestY = Math.max(rect.y, Math.min(circleY, rect.y + rect.height));
+      const dx = circleX - closestX;
+      const dy = circleY - closestY;
+      return (dx * dx + dy * dy) < circleR * circleR;
+    }
+
+    function checkCollisions() {
+      meteors.forEach((meteor, index) => {
+        if (rectCircleCollision(player, meteor.x, meteor.y, meteor.radius)) {
+          if (player.shield) {
+            player.shield = false;
+            player.shieldTimer = 0;
+            meteors.splice(index, 1);
+          } else {
+            gameOver = true;
+          }
+        }
+      });
+
+      stars.forEach((item, index) => {
+        if (rectCircleCollision(player, item.x, item.y, 10)) {
+          score += 10;
+          stars.splice(index, 1);
+        }
+      });
+
+      shields.forEach((item, index) => {
+        if (rectCircleCollision(player, item.x, item.y, 12)) {
+          player.shield = true;
+          player.shieldTimer = 300;
+          shields.splice(index, 1);
+        }
+      });
+    }
+
+    function drawUI() {
+      ctx.fillStyle = "white";
+      ctx.font = "24px Orbitron";
+      ctx.textAlign = "left";
+      ctx.fillText(`Score: ${score}`, 20, 35);
+      ctx.fillText(`High Score: ${highScore}`, 20, 70);
+
+      ctx.fillStyle = "#ffd166";
+      ctx.font = "16px Orbitron";
+      ctx.fillText("Janisis Juca", 20, 100);
+
+      ctx.fillStyle = "#7df9ff";
+      ctx.font = "18px Orbitron";
+      ctx.fillText(`Speed: ${gameSpeed.toFixed(1)}`, canvas.width - 150, 35);
+
+      if (player.shield) {
+        ctx.fillStyle = "#00f5d4";
+        ctx.fillText(`Shield: ${Math.ceil(player.shieldTimer / 60)}s`, canvas.width - 170, 65);
+      }
+    }
+
+    function drawStartScreen() {
+      drawBackground();
+
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#7df9ff";
+      ctx.font = "54px Orbitron";
+      ctx.fillText("METEOR DASH", canvas.width / 2, 180);
+
+      ctx.fillStyle = "#ffd166";
+      ctx.font = "24px Orbitron";
+      ctx.fillText("Custom Game by Janisis Juca", canvas.width / 2, 230);
+
+      ctx.fillStyle = "white";
+      ctx.font = "20px Orbitron";
+      ctx.fillText("Use Arrow Keys to move", canvas.width / 2, 310);
+      ctx.fillText("Collect stars, avoid meteors", canvas.width / 2, 345);
+      ctx.fillText("Click to Start", canvas.width / 2, 395);
+
+      ctx.fillStyle = "#7df9ff";
+      ctx.fillText(`High Score: ${highScore}`, canvas.width / 2, 450);
+    }
+
+    function drawGameOverScreen() {
+      drawBackground();
+
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#ff595e";
+      ctx.font = "56px Orbitron";
+      ctx.fillText("GAME OVER", canvas.width / 2, 190);
+
+      ctx.fillStyle = "white";
+      ctx.font = "24px Orbitron";
+      ctx.fillText(`Final Score: ${score}`, canvas.width / 2, 260);
+      ctx.fillText(`High Score: ${highScore}`, canvas.width / 2, 300);
+
+      ctx.fillStyle = "#ffd166";
+      ctx.fillText("Click to Play Again", canvas.width / 2, 370);
+
+      ctx.fillStyle = "#7df9ff";
+      ctx.font = "18px Orbitron";
+      ctx.fillText("Extra features added: shield, speed increase, high score", canvas.width / 2, 430);
+    }
+
+    function gameLoop() {
+      if (!gameStarted) return;
+
+      if (gameOver) {
+        if (score > highScore) {
+          highScore = score;
+          localStorage.setItem(HIGH_SCORE_KEY, highScore);
+        }
+        drawGameOverScreen();
+        return;
+      }
+
+      drawBackground();
+      frameCount++;
+
+      if (frameCount % 600 === 0) {
+        gameSpeed += 0.4;
+      }
+
+      movePlayer();
+      spawnObjects();
+      updateObjects();
+      checkCollisions();
+
+      drawPlayer();
+      meteors.forEach(drawMeteor);
+      stars.forEach(drawStar);
+      shields.forEach(drawShieldPowerUp);
+      drawUI();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    window.addEventListener("keydown", (e) => {
+      keys[e.key] = true;
+    });
+
+    window.addEventListener("keyup", (e) => {
+      keys[e.key] = false;
+    });
+
+    canvas.addEventListener("click", () => {
+      if (!gameStarted || gameOver) {
+        resetGame();
+      }
+    });
+
+    drawStartScreen();
+  </script>
+</body>
+</html>
