@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cosmic Defender - Janisis Juca</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background:
+        radial-gradient(circle at top, #1c2340 0%, #090b17 45%, #020308 100%);
+      font-family: 'Orbitron', sans-serif;
+      color: #fff;
+      overflow: hidden;
+    }
+
+    #game-container {
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      color: #7df9ff;
+      text-shadow: 0 0 8px #7df9ff, 0 0 20px #00d9ff;
+      letter-spacing: 2px;
+      font-size: 2rem;
+    }
+
+    .subtitle {
+      margin-bottom: 10px;
+      color: #ffd166;
+      font-size: 0.95rem;
+    }
+
+    canvas {
+      display: block;
+      margin: 0 auto;
+      background:
+        linear-gradient(to bottom, rgba(9, 12, 30, 0.95), rgba(0, 0, 0, 0.98));
+      border: 2px solid #7df9ff;
+      border-radius: 14px;
+      box-shadow:
+        0 0 25px rgba(0, 255, 255, 0.3),
+        inset 0 0 30px rgba(125, 249, 255, 0.06);
+    }
+  </style>
+</head>
+<body>
+  <div id="game-container">
+    <h1>Cosmic Defender - Janisis Juca</h1>
+    <div class="subtitle">Arrow keys to move • Space to shoot • Click to start</div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+  </div>
+
+  <script>
+    // -----------------------------
+    // Basic Setup
+    // -----------------------------
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const keys = {};
+    let score = 0;
+    let gameOver = false;
+    let gameStarted = false;
+    let bossSpawned = false;
+    let bossDefeated = false;
+    let leaderboardSavedThisRound = false;
+
+    const LEADERBOARD_KEY = "janisis_space_shooter_top5";
+
+    // -----------------------------
+    // Sounds
+    // -----------------------------
+    const collisionSound = new Tone.Synth({
+      oscillator: { type: "fmsquare" },
+      envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.1 }
+    }).toDestination();
+
+    const shootSound = new Tone.Synth({
+      oscillator: { type: "triangle" },
+      envelope: { attack: 0.005, decay: 0.05, sustain: 0.02, release: 0.05 }
+    }).toDestination();
+
+    const powerSound = new Tone.Synth({
+      oscillator: { type: "sine" },
+      envelope: { attack: 0.01, decay: 0.15, sustain: 0.1, release: 0.15 }
+    }).toDestination();
+
+    const bossHitSound = new Tone.Synth({
+      oscillator: { type: "sawtooth" },
+      envelope: { attack: 0.01, decay: 0.1, sustain: 0.05, release: 0.1 }
+    }).toDestination();
+
+    // -----------------------------
+    // Assets
+    // -----------------------------
+    const assets = {
+      player: new Image(),
+      bullet: new Image(),
+      asteroid: new Image(),
+      chaser: new Image(),
+      dodger: new Image(),
+      shieldPowerUp: new Image(),
+      fuelPowerUp: new Image(),
+      rapidFirePowerUp: new Image(),
+      boss: new Image(),
+      enemyBullet: new Image()
+    };
+
+    assets.player.src = "https://placehold.co/64x64/7df9ff/000000?text=P";
+    assets.bullet.src = "https://placehold.co/14x22/fff200/000000?text=|";
+    assets.asteroid.src = "https://placehold.co/64x64/ff595e/ffffff?text=A";
+    assets.chaser.src = "https://placehold.co/50x50/ff924c/ffffff?text=C";
+    assets.dodger.src = "https://placehold.co/50x50/f15bb5/ffffff?text=D";
+    assets.shieldPowerUp.src = "https://placehold.co/40x40/00f5d4/000000?text=S";
+    assets.fuelPowerUp.src = "https://placehold.co/40x40/ffffff/000000?text=F";
+    assets.rapidFirePowerUp.src = "https://placehold.co/40x40/ffee32/000000?text=R";
+    assets.boss.src = "https://placehold.co/180x110/9b5de5/ffffff?text=BOSS";
+    assets.enemyBullet.src = "https://placehold.co/12x20/ff0000/ffffff?text=.";
+
+    // -----------------------------
+    // Stars Background
+    // -----------------------------
+    const stars = Array.from({ length: 100 }, () => ({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: Math.random() * 2 + 0.5,
+      speed: Math.random() * 1.5 + 0.3
+    }));
+
+    function drawStars() {
+      ctx.fillStyle = "#ffffff";
+      stars.forEach(star => {
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+        ctx.fill();
+        star.y += star.speed;
+        if (star.y > canvas.height) {
+          star.y = 0;
+          star.x = Math.random() * canvas.width;
+        }
+      });
+    }
+
+    // -----------------------------
+    // Leaderboard Helpers
+    // -----------------------------
+    function getHighScores() {
+      const saved = localStorage.getItem(LEADERBOARD_KEY);
+      return saved ? JSON.parse(saved) : [];
+    }
+
+    function saveHighScores(scores) {
+      localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(scores));
+    }
+
+    function updateLeaderboard(finalScore) {
+      const scores = getHighScores();
+      const lowestScore = scores.length < 5 ? 0 : scores[scores.length - 1].score;
+
+      if (finalScore > lowestScore || scores.length < 5) {
+        let initials = prompt("New High Score! Enter your initials:", "JJ");
+        if (!initials) initials = "AAA";
+        initials = initials.toUpperCase().substring(0, 3);
+
+        scores.push({ initials, score: finalScore });
+        scores.sort((a, b) => b.score - a.score);
+
+        const topFive = scores.slice(0, 5);
+        saveHighScores(topFive);
+      }
+    }
+
+    function drawLeaderboard(x, y) {
+      const scores = getHighScores();
+
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#7df9ff";
+      ctx.font = "20px Orbitron";
+      ctx.fillText("TOP 5 SCORES", x, y);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "16px Orbitron";
+
+      if (scores.length === 0) {
+        ctx.fillText("No scores yet", x, y + 30);
+        return;
+      }
+
+      scores.forEach((entry, index) => {
+        ctx.fillText(`${index + 1}. ${entry.initials} - ${entry.score}`, x, y + 30 + index * 24);
+      });
+    }
+
+    // -----------------------------
+    // Player
+    // -----------------------------
+    class Player {
+      constructor() {
+        this.width = 64;
+        this.height = 64;
+        this.x = canvas.width / 2 - this.width / 2;
+        this.y = canvas.height - this.height - 20;
+        this.speed = 7;
+        this.bullets = [];
+        this.shootCooldown = 0;
+        this.normalCooldown = 15;
+        this.rapidCooldown = 5;
+
+        this.maxFuel = 100;
+        this.fuel = this.maxFuel;
+
+        this.shieldActive = false;
+        this.shieldTimer = 0;
+
+        this.rapidFireActive = false;
+        this.rapidFireTimer = 0;
+      }
+
+      update() {
+        if (keys["ArrowLeft"] && this.x > 0) {
+          this.x -= this.speed;
+        }
+        if (keys["ArrowRight"] && this.x < canvas.width - this.width) {
+          this.x += this.speed;
+        }
+
+        if (keys[" "] && this.shootCooldown <= 0) {
+          this.shoot();
+          this.shootCooldown = this.rapidFireActive ? this.rapidCooldown : this.normalCooldown;
+        }
+
+        if (this.shootCooldown > 0) {
+          this.shootCooldown--;
+        }
+
+        this.bullets.forEach((bullet, index) => {
+          bullet.update();
+          if (bullet.y + bullet.height < 0) {
+            this.bullets.splice(index, 1);
+          }
+        });
+
+        this.fuel -= 0.03;
+        if (this.fuel <= 0) {
+          gameOver = true;
+        }
+
+        if (this.shieldActive) {
+          this.shieldTimer--;
+          if (this.shieldTimer <= 0) {
+            this.shieldActive = false;
+          }
+        }
+
+        if (this.rapidFireActive) {
+          this.rapidFireTimer--;
+          if (this.rapidFireTimer <= 0) {
+            this.rapidFireActive = false;
+          }
+        }
+      }
+
+      draw() {
+        ctx.drawImage(assets.player, this.x, this.y, this.width, this.height);
+
+        if (this.shieldActive) {
+          ctx.beginPath();
+          ctx.arc(this.x + this.width / 2, this.y + this.height / 2, this.width / 2 + 10, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(0, 255, 255, 0.2)";
+          ctx.fill();
+          ctx.strokeStyle = "rgba(0, 255, 255, 0.85)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        if (this.rapidFireActive) {
+          ctx.strokeStyle = "rgba(255, 238, 50, 0.95)";
+          ctx.lineWidth = 3;
+          ctx.strokeRect(this.x - 4, this.y - 4, this.width + 8, this.height + 8);
+        }
+
+        this.bullets.forEach(bullet => bullet.draw());
+      }
+
+      shoot() {
+        this.bullets.push(new Bullet(this.x + this.width / 2, this.y));
+        shootSound.triggerAttackRelease("E5", "16n");
+      }
+
+      activateShield() {
+        this.shieldActive = true;
+        this.shieldTimer = 300;
+      }
+
+      addFuel() {
+        this.fuel = Math.min(this.maxFuel, this.fuel + 35);
+      }
+
+      activateRapidFire() {
+        this.rapidFireActive = true;
+        this.rapidFireTimer = 360;
+      }
+    }
+
+    class Bullet {
+      constructor(x, y) {
+        this.width = 14;
+        this.height = 22;
+        this.x = x - this.width / 2;
+        this.y = y;
+        this.speed = 11;
+      }
+
+      update() {
+        this.y -= this.speed;
+      }
+
+      draw() {
+        ctx.drawImage(assets.bullet, this.x, this.y, this.width, this.height);
+      }
+    }
+
+    class EnemyBullet {
+      constructor(x, y) {
+        this.width = 12;
+        this.height = 20;
+        this.x = x;
+        this.y = y;
+        this.speed = 5;
+      }
+
+      update() {
+        this.y += this.speed;
+      }
+
+      draw() {
+        ctx.drawImage(assets.enemyBullet, this.x, this.y, this.width, this.height);
+      }
+    }
+
+    // -----------------------------
+    // Enemies
+    // -----------------------------
+    class Competitor {
+      constructor(image, width, height, speed) {
+        this.image = image;
+        this.width = width;
+        this.height = height;
+        this.x = Math.random() * (canvas.width - this.width);
+        this.y = -this.height;
+        this.speed = speed;
+      }
+
+      update() {
+        this.y += this.speed;
+      }
+
+      draw() {
+        ctx.drawImage(this.image, this.x, this.y, this.width, this.height);
+      }
+    }
+
+    class Asteroid extends Competitor {
+      constructor() {
+        super(assets.asteroid, 64, 64, Math.random() * 2 + 2);
+      }
+    }
+
+    class Chaser extends Competitor {
+      constructor() {
+        super(assets.chaser, 50, 50, Math.random() * 1.5 + 1.5);
+      }
+
+      update() {
+        super.update();
+        if (player.x > this.x) this.x += this.speed * 0.5;
+        else this.x -= this.speed * 0.5;
+      }
+    }
+
+    class Dodger extends Competitor {
+      constructor() {
+        super(assets.dodger, 50, 50, Math.random() * 2.5 + 3);
+      }
+
+      update() {
+        super.update();
+
+        player.bullets.forEach(bullet => {
+          const dist = Math.hypot(bullet.x - this.x, bullet.y - this.y);
+          if (dist < 150) {
+            if (bullet.x < this.x) this.x += 2.2;
+            else this.x -= 2.2;
+          }
+        });
+
+        if (this.x < 0) this.x = 0;
+        if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
+      }
+    }
+
+    // -----------------------------
+    // Boss
+    // -----------------------------
+    class Boss {
+      constructor() {
+        this.width = 180;
+        this.height = 110;
+        this.x = canvas.width / 2 - this.width / 2;
+        this.y = 40;
+        this.speed = 3;
+        this.direction = 1;
+        this.health = 60;
+        this.maxHealth = 60;
+        this.bullets = [];
+        this.shootTimer = 0;
+        this.waveTimer = 0;
+      }
+
+      update() {
+        this.x += this.speed * this.direction;
+        if (this.x <= 0 || this.x + this.width >= canvas.width) {
+          this.direction *= -1;
+        }
+
+        this.waveTimer += 0.05;
+        this.y = 40 + Math.sin(this.waveTimer) * 15;
+
+        this.shootTimer--;
+        if (this.shootTimer <= 0) {
+          this.fireSpread();
+          this.shootTimer = 45;
+        }
+
+        this.bullets.forEach((bullet, index) => {
+          bullet.update();
+          if (bullet.y > canvas.height) {
+            this.bullets.splice(index, 1);
+          }
+        });
+      }
+
+      fireSpread() {
+        this.bullets.push(new EnemyBullet(this.x + 20, this.y + this.height));
+        this.bullets.push(new EnemyBullet(this.x + this.width / 2 - 6, this.y + this.height));
+        this.bullets.push(new EnemyBullet(this.x + this.width - 32, this.y + this.height));
+      }
+
+      draw() {
+        ctx.drawImage(assets.boss, this.x, this.y, this.width, this.height);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "18px Orbitron";
+        ctx.textAlign = "center";
+        ctx.fillText("BOSS", this.x + this.width / 2, this.y - 8);
+
+        ctx.fillStyle = "#333";
+        ctx.fillRect(this.x, this.y + this.height + 8, this.width, 12);
+        ctx.fillStyle = "#ff1744";
+        ctx.fillRect(this.x, this.y + this.height + 8, (this.health / this.maxHealth) * this.width, 12);
+        ctx.strokeStyle = "#ffffff";
+        ctx.strokeRect(this.x, this.y + this.height + 8, this.width, 12);
+
+        this.bullets.forEach(bullet => bullet.draw());
+      }
+    }
+
+    // -----------------------------
+    // Power-ups
+    // -----------------------------
+    class PowerUp {
+      constructor(image, width, height) {
+        this.image = image;
+        this.width = width;
+        this.height = height;
+        this.x = Math.random() * (canvas.width - this.width);
+        this.y = -this.height;
+        this.speed = 2;
+      }
+
+      update() {
+        this.y += this.speed;
+      }
+
+      draw() {
+        ctx.drawImage(this.image, this.x, this.y, this.width, this.height);
+      }
+    }
+
+    class ShieldPowerUp extends PowerUp {
+      constructor() {
+        super(assets.shieldPowerUp, 40, 40);
+      }
+    }
+
+    class FuelPowerUp extends PowerUp {
+      constructor() {
+        super(assets.fuelPowerUp, 40, 40);
+      }
+    }
+
+    class RapidFirePowerUp extends PowerUp {
+      constructor() {
+        super(assets.rapidFirePowerUp, 40, 40);
+      }
+    }
+
+    // -----------------------------
+    // Game Objects
+    // -----------------------------
+    let player = new Player();
+    let competitors = [];
+    let powerUps = [];
+    let boss = null;
+    let competitorSpawnTimer = 100;
+    let powerUpSpawnTimer = 350;
+
+    // -----------------------------
+    // Reset Game
+    // -----------------------------
+    function resetGame() {
+      player = new Player();
+      competitors = [];
+      powerUps = [];
+      boss = null;
+
+      score = 0;
+      gameOver = false;
+      gameStarted = true;
+      bossSpawned = false;
+      bossDefeated = false;
+      leaderboardSavedThisRound = false;
+
+      competitorSpawnTimer = 100;
+      powerUpSpawnTimer = 350;
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    // -----------------------------
+    // Collision Detection
+    // -----------------------------
+    function isColliding(a, b) {
+      return (
+        a.x < b.x + b.width &&
+        a.x + a.width > b.x &&
+        a.y < b.y + b.height &&
+        a.y + a.height > b.y
+      );
+    }
+
+    function checkCollisions() {
+      // Player bullets vs normal enemies
+      player.bullets.forEach((bullet, bIndex) => {
+        competitors.forEach((competitor, cIndex) => {
+          if (isColliding(bullet, competitor)) {
+            player.bullets.splice(bIndex, 1);
+            competitors.splice(cIndex, 1);
+            score += 10;
+          }
+        });
+      });
+
+      // Player bullets vs boss
+      if (boss) {
+        player.bullets.forEach((bullet, bIndex) => {
+          if (isColliding(bullet, boss)) {
+            player.bullets.splice(bIndex, 1);
+            boss.health--;
+            bossHitSound.triggerAttackRelease("C3", "16n");
+
+            if (boss.health <= 0) {
+              score += 500;
+              boss = null;
+              bossDefeated = true;
+            }
+          }
+        });
+      }
+
+      // Normal enemies vs player
+      if (!player.shieldActive) {
+        competitors.forEach((competitor) => {
+          if (isColliding(player, competitor)) {
+            collisionSound.triggerAttackRelease("C2", "8n");
+            gameOver = true;
+          }
+        });
+
+        // Boss bullets vs player
+        if (boss) {
+          boss.bullets.forEach((bullet) => {
+            if (isColliding(player, bullet)) {
+              collisionSound.triggerAttackRelease("C2", "8n");
+              gameOver = true;
+            }
+          });
+
+          // Boss body vs player
+          if (isColliding(player, boss)) {
+            collisionSound.triggerAttackRelease("C2", "8n");
+            gameOver = true;
+          }
+        }
+      }
+
+      // Power-ups vs player
+      powerUps.forEach((powerUp, pIndex) => {
+        if (isColliding(player, powerUp)) {
+          powerUps.splice(pIndex, 1);
+          powerSound.triggerAttackRelease("G5", "8n");
+
+          if (powerUp instanceof ShieldPowerUp) {
+            player.activateShield();
+          } else if (powerUp instanceof FuelPowerUp) {
+            player.addFuel();
+          } else if (powerUp instanceof RapidFirePowerUp) {
+            player.activateRapidFire();
+          }
+        }
+      });
+    }
+
+    // -----------------------------
+    // Spawn Logic
+    // -----------------------------
+    function spawnBoss() {
+      competitors = [];
+      powerUps = [];
+      boss = new Boss();
+      bossSpawned = true;
+    }
+
+    function handleSpawning() {
+      if (!bossSpawned && score >= 1000) {
+        spawnBoss();
+      }
+
+      if (!bossSpawned || bossDefeated) {
+        competitorSpawnTimer--;
+        if (competitorSpawnTimer <= 0) {
+          const rand = Math.random();
+
+          if (rand < 0.6) competitors.push(new Asteroid());
+          else if (rand < 0.85) competitors.push(new Chaser());
+          else competitors.push(new Dodger());
+
+          competitorSpawnTimer = Math.max(20, 100 - Math.floor(score / 25));
+        }
+
+        powerUpSpawnTimer--;
+        if (powerUpSpawnTimer <= 0) {
+          const roll = Math.random();
+
+          if (roll < 0.34) {
+            powerUps.push(new ShieldPowerUp());
+          } else if (roll < 0.67) {
+            powerUps.push(new FuelPowerUp());
+          } else {
+            powerUps.push(new RapidFirePowerUp());
+          }
+
+          powerUpSpawnTimer = Math.floor(Math.random() * 350) + 250;
+        }
+      }
+    }
+
+    // -----------------------------
+    // Drawing UI
+    // -----------------------------
+    function drawUI() {
+      ctx.textAlign = "left";
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "26px Orbitron";
+      ctx.fillText(`Score: ${score}`, 20, 36);
+
+      ctx.font = "16px Orbitron";
+      ctx.fillStyle = "#ffd166";
+      ctx.fillText("Janisis Juca", 20, 62);
+
+      // Fuel bar
+      ctx.fillStyle = "#444";
+      ctx.fillRect(canvas.width - 230, 20, 200, 20);
+
+      const fuelColor = player.fuel < 25 ? "#ff3b30" : "#32d74b";
+      ctx.fillStyle = fuelColor;
+      ctx.fillRect(canvas.width - 230, 20, (player.fuel / player.maxFuel) * 200, 20);
+
+      ctx.strokeStyle = "#ffffff";
+      ctx.strokeRect(canvas.width - 230, 20, 200, 20);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "14px Orbitron";
+      ctx.fillText("FUEL", canvas.width - 282, 35);
+
+      // status effects
+      let statusY = 90;
+      if (player.shieldActive) {
+        ctx.fillStyle = "#00f5d4";
+        ctx.fillText(`Shield: ${Math.ceil(player.shieldTimer / 60)}s`, 20, statusY);
+        statusY += 22;
+      }
+
+      if (player.rapidFireActive) {
+        ctx.fillStyle = "#ffee32";
+        ctx.fillText(`Rapid Fire: ${Math.ceil(player.rapidFireTimer / 60)}s`, 20, statusY);
+      }
+
+      if (boss) {
+        ctx.fillStyle = "#ff66c4";
+        ctx.font = "18px Orbitron";
+        ctx.fillText("Boss Battle!", canvas.width / 2 - 70, 30);
+      }
+
+      if (bossDefeated) {
+        ctx.fillStyle = "#7df9ff";
+        ctx.font = "18px Orbitron";
+        ctx.fillText("Boss Defeated!", canvas.width / 2 - 75, 56);
+      }
+    }
+
+    function drawStartScreen() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawStars();
+
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#7df9ff";
+      ctx.font = "52px Orbitron";
+      ctx.fillText("COSMIC DEFENDER", canvas.width / 2, 130);
+
+      ctx.fillStyle = "#ffd166";
+      ctx.font = "24px Orbitron";
+      ctx.fillText("By Janisis Juca", canvas.width / 2, 175);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "20px Orbitron";
+      ctx.fillText("Move: Arrow Keys", canvas.width / 2, 250);
+      ctx.fillText("Shoot: Space Bar", canvas.width / 2, 285);
+      ctx.fillText("Click canvas to start", canvas.width / 2, 320);
+
+      drawLeaderboard(275, 390);
+    }
+
+    function drawGameOverScreen() {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#ff4d6d";
+      ctx.font = "60px Orbitron";
+      ctx.fillText("GAME OVER", canvas.width / 2, 110);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "26px Orbitron";
+      ctx.fillText(`Final Score: ${score}`, canvas.width / 2, 165);
+
+      ctx.fillStyle = "#ffd166";
+      ctx.font = "20px Orbitron";
+      ctx.fillText("Click to Play Again", canvas.width / 2, 205);
+
+      drawLeaderboard(275, 280);
+    }
+
+    // -----------------------------
+    // Main Loop
+    // -----------------------------
+    let lastTime = 0;
+
+    function gameLoop(timestamp) {
+      if (!gameStarted) return;
+
+      if (gameOver) {
+        if (!leaderboardSavedThisRound) {
+          updateLeaderboard(score);
+          leaderboardSavedThisRound = true;
+        }
+        drawGameOverScreen();
+        return;
+      }
+
+      const deltaTime = timestamp - lastTime;
+      lastTime = timestamp;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawStars();
+
+      player.update(deltaTime);
+
+      competitors.forEach((enemy, index) => {
+        enemy.update();
+        if (enemy.y > canvas.height) competitors.splice(index, 1);
+      });
+
+      powerUps.forEach((power, index) => {
+        power.update();
+        if (power.y > canvas.height) powerUps.splice(index, 1);
+      });
+
+      if (boss) {
+        boss.update();
+      }
+
+      handleSpawning();
+      checkCollisions();
+
+      player.draw();
+      competitors.forEach(enemy => enemy.draw());
+      powerUps.forEach(power => power.draw());
+      if (boss) boss.draw();
+
+      drawUI();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    // -----------------------------
+    // Events
+    // -----------------------------
+    window.addEventListener("keydown", (e) => {
+      keys[e.key] = true;
+    });
+
+    window.addEventListener("keyup", (e) => {
+      keys[e.key] = false;
+    });
+
+    canvas.addEventListener("click", async () => {
+      if (Tone.context.state !== "running") {
+        await Tone.start();
+      }
+
+      if (!gameStarted || gameOver) {
+        resetGame();
+      }
+    });
+
+    // -----------------------------
+    // Initial Screen
+    // -----------------------------
+    assets.player.onload = () => {
+      drawStartScreen();
+    };
+  </script>
+</body>
+</html>
